@@ -274,20 +274,27 @@ def get_proj_potencia(lista_adotantes, dir_dados_premissas):
              adotantes_total=('num_geradores', 'sum'))
         .assign(pot_media=lambda x: x['pot_total'] / x['adotantes_total'])
     ).reset_index()
+    potencia_media.drop_duplicates(inplace=True)
+
     potencia_media = (
         potencia_media
         .pivot_table(index=['disco', 'segmento', 'fonte_resumo'], fill_value=None)
         .assign(pot_media=lambda x: x['pot_media'].fillna(x['pot_media'].mean()))
     ).reset_index()
+    potencia_media.drop_duplicates(inplace=True)
+
     potencia_media = potencia_media.loc[:, ['disco', 'segmento', 'fonte_resumo', 'pot_media']]
     potencia_media = potencia_media.merge(potencia_tipica, on=['disco', 'segmento'], how='left')
+    potencia_media.drop_duplicates(inplace=True)
     potencia_media['pot_media'] = \
         potencia_media.apply(lambda x: x['pot_sistemas_kw'] if pd.isna(x['pot_media']) else x['pot_media'], axis=1)
     potencia_media = potencia_media.drop(columns='pot_sistemas_kw')
+    potencia_media.drop_duplicates(inplace=True)
 
     # Juntar com a projeção de adotantes
     proj_potencia = pd.merge(results_proj_adotantes, potencia_media,
                              on=['disco', 'segmento', 'fonte_resumo'], how='left')
+    proj_potencia.drop_duplicates(inplace=True)
 
     # Histórico de adotantes para substituir anos iniciais da projeção
     dados_gd['date'] = dados_gd.apply(lambda lin: datetime(lin['ano'], lin['mes'], 1), axis=1)
@@ -299,15 +306,20 @@ def get_proj_potencia(lista_adotantes, dir_dados_premissas):
         .pivot_table(index=['ano', 'mes', 'disco', 'segmento', 'fonte_resumo'], fill_value=0)
         .reset_index()
     )
+    historico_pot_fontes.drop_duplicates(inplace=True)
 
     proj_potencia['pot_mes'] = proj_potencia['adotantes_mes'] * proj_potencia['pot_media']
-
+    proj_potencia.drop(['date'], axis=1, inplace=True)
+    historico_pot_fontes.drop(['date'], axis=1, inplace=True)
     proj_potencia = pd.merge(proj_potencia, historico_pot_fontes,
                              on=["disco", "segmento", "ano", "mes", "fonte_resumo"], how="left")
+    proj_potencia.drop_duplicates(inplace=True)
 
-    proj_potencia['pot_mes'] = np.where(proj_potencia['date'] <= datetime(2024, 2, 1),
+    proj_potencia['date'] = proj_potencia.apply(lambda lin: datetime(lin['ano'], lin['mes'], 1), axis=1)
+    proj_potencia['pot_mes'] = np.where(proj_potencia['date'] <= datetime(2024, 8, 1),
                                         proj_potencia['pot_hist'],
                                         proj_potencia['pot_mes'])
+    proj_potencia.drop_duplicates(inplace=True)
 
     proj_potencia['pot_mes_mw'] = proj_potencia['pot_mes'] / 1000
 
@@ -317,6 +329,7 @@ def get_proj_potencia(lista_adotantes, dir_dados_premissas):
         .apply(lambda x: x.assign(pot_acum_mw=x['pot_mes_mw'].cumsum()))
         .reset_index(drop=True)
     )
+    proj_potencia.drop_duplicates(inplace=True)
 
     return proj_potencia
 
@@ -345,21 +358,27 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
             adotantes_mes=np.where(
                 x['ano'] == 2013,
                 x['mercado_potencial'] * x['Ft'],
-                (x['mercado_potencial'] * x['Ft']) - (x['mercado_potencial'] * x['Ft']).shift()
+                (x['mercado_potencial'] * x['Ft']) - (x['mercado_potencial'] * x['Ft']).shift(12)
             ),
             adotantes_acum=(x['mercado_potencial'] * x['Ft']).cumsum()
         )
     ).reset_index(drop=True)
+
     projecao['adotantes_mes'] = np.where(projecao['adotantes_mes'] < 2013, 0, projecao['adotantes_mes'])
     projecao['adotantes_mes'] = projecao['adotantes_mes'].astype(int)
     projecao['adotantes_acum'] = projecao['adotantes_acum'].astype(int)
+    projecao.drop_duplicates(inplace=True)
 
     # Suavização em caso de adotantes = 0
     projecao['adotantes_mes_media'] = \
         projecao.groupby(['disco', 'segmento'])['adotantes_mes'].rolling(window=2,
                                                                          min_periods=1).mean().reset_index(drop=True)
+    projecao.drop_duplicates(inplace=True)
+
     projecao['adotantes_mes_media'] = \
         np.where(projecao['adotantes_mes_media'].isna(), projecao['adotantes_mes'], projecao['adotantes_mes_media'])
+    projecao.drop_duplicates(inplace=True)
+
     projecao['adotantes_mes_media'] = projecao['adotantes_mes_media'].astype(int)
 
     projecao['adotantes_mes_c'] = \
@@ -368,7 +387,11 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
                  np.where((projecao['adotantes_mes'].shift() == 0) & (projecao['ano'] > 2019),
                           projecao['adotantes_mes_media'],
                           projecao['adotantes_mes']))
+    projecao.drop_duplicates(inplace=True)
+
     projecao['adotantes_acum_c'] = projecao.groupby(['disco', 'segmento'])['adotantes_mes_c'].cumsum()
+    projecao.drop_duplicates(inplace=True)
+
     projecao.drop(['adotantes_mes', 'adotantes_acum', 'adotantes_mes_media'], axis=1, inplace=True)
     projecao.rename(columns={'adotantes_mes_c': 'adotantes_mes', 'adotantes_acum_c': 'adotantes_acum'}, inplace=True)
 
@@ -382,6 +405,7 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
             part_fonte=lambda x: x['adotantes_hist'] / x['adotantes_hist_total']
         )
     )
+    part_adot_fontes.drop_duplicates(inplace=True)
 
     # Completar valores ausentes
     part_adot_fontes = part_adot_fontes.groupby(['disco', 'segmento', 'fonte_resumo']).apply(
@@ -389,11 +413,13 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
             faltantes=x['part_fonte'].isna().sum()
         )
     ).reset_index(drop=True)
+    part_adot_fontes.drop_duplicates(inplace=True)
 
     part_adot_fontes['part_fonte'] = \
         np.where((part_adot_fontes['faltantes'] == 4) & (part_adot_fontes['fonte_resumo'] == 'Fotovoltaica'),
                  1,
                  part_adot_fontes['part_fonte'])
+    part_adot_fontes.drop_duplicates(inplace=True)
 
     part_adot_fontes['part_fonte'] = part_adot_fontes['part_fonte'].fillna(0)
 
@@ -401,6 +427,7 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
 
     # Histórico de adotantes para substituir anos iniciais da projeção
     dados_gd['date'] = dados_gd.apply(lambda lin: datetime(lin['ano'], lin['mes'], 1), axis=1)
+    dados_gd.drop_duplicates(inplace=True)
 
     historico_adot_fontes = (
         dados_gd
@@ -408,12 +435,14 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
         .agg(adotantes_hist=('num_geradores', 'sum'))
         .reset_index()
     )
+    historico_adot_fontes.drop_duplicates(inplace=True)
 
     historico_adot_fontes = (
         historico_adot_fontes
         .pivot_table(index=['date', 'ano', 'mes', 'disco', 'segmento', 'fonte_resumo'], fill_value=0)
         .reset_index()
     )
+    historico_adot_fontes.drop_duplicates(inplace=True)
 
     # Juntar com projecao e historico_adot_fontes
     projecao = (
@@ -424,13 +453,14 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
     projecao = projecao.merge(historico_adot_fontes, on=['disco', 'segmento', 'ano', 'mes', 'fonte_resumo'], how='left')
     projecao = (
         projecao
-        .assign(adotantes_mes=lambda x: np.where(x['date'] <= datetime(2024, 2, 1),
+        .assign(adotantes_mes=lambda x: np.where(x['date'] <= datetime(2024, 8, 1),
                                                  x['adotantes_hist'], x['adotantes_mes']))
         .groupby(['disco', 'segmento', 'fonte_resumo'])
         .apply(lambda x: x.assign(adotantes_acum=x['adotantes_mes'].cumsum()))
         .reset_index(drop=True)
         .assign(mercado_potencial=lambda x: x['mercado_potencial'] / 4)
     )
+    projecao.drop_duplicates(inplace=True)
 
     # Cálculo percentual de adocao frente ao numero de consumidores totais
     adotantes_segmento = (
@@ -443,6 +473,7 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
         .agg(adotantes=('adotantes_acum', 'sum'), mercado_potencial=('mercado_potencial', 'sum'))
         .reset_index()
     )
+    adotantes_segmento.drop_duplicates(inplace=True)
 
     mercado_nicho = (
         input_consumidores_nicho
@@ -454,6 +485,7 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
         .agg(mercado_nicho=('consumidores', 'sum'))
         .reset_index()
     )
+    mercado_nicho.drop_duplicates(inplace=True)
 
     results_part_adotantes = (
         pd.merge(adotantes_segmento, input_consumidores_totais, on=['disco', 'ano', 'mes', 'segmento'])
@@ -462,6 +494,7 @@ def get_proj_adotantes(results_casos_otm, input_consumidores_totais, input_consu
         .assign(penetracao_nicho=lambda x: x['adotantes'] / x['mercado_nicho'],
                 penetracao_potencial=lambda x: x['adotantes'] / x['mercado_potencial'])
     )
+    results_part_adotantes.drop_duplicates(inplace=True)
 
     # Projeção
     results_proj_adotantes = projecao.copy()
@@ -524,19 +557,22 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
     # Agrupar casos de otimização
     casos_otimizacao = \
         results_payback.groupby(['disco', 'segmento']).size().reset_index(name='count').drop(columns=['count'])
+    casos_otimizacao.drop_duplicates(inplace=True)
 
     # Agrupar histórico
     historico = \
         dados_gd.groupby(['disco', 'segmento', 'ano', 'mes'])['num_geradores'].sum().reset_index(name='adotantes_hist')
+    historico.drop_duplicates(inplace=True)
 
     # Resultado_payback_historico
     resultado_payback_historico = results_payback.copy()
     resultado_payback_historico['date'] = \
         resultado_payback_historico.apply(lambda lin: datetime(lin['ano'], lin['mes'], 1), axis=1)
     resultado_payback_historico = \
-        resultado_payback_historico[resultado_payback_historico['date'] <= datetime(2024, 2, 1)]
+        resultado_payback_historico[resultado_payback_historico['date'] <= datetime(2024, 8, 1)]
     resultado_payback_historico = resultado_payback_historico[['disco', 'segmento', 'ano',
                                                                'mes', 'payback', 'payback_desc']]
+    resultado_payback_historico.drop_duplicates(inplace=True)
 
     # Colocando payback NaN para um tempo alto de retorno
     resultado_payback_historico['payback'] = resultado_payback_historico['payback'].fillna(100)
@@ -545,8 +581,11 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
     # Juntar dados
     base_otimizacao = \
         pd.merge(resultado_payback_historico, results_consumidores, on=['disco', 'ano', 'mes', 'segmento'])
+    base_otimizacao.drop_duplicates(inplace=True)
     base_otimizacao = pd.merge(base_otimizacao, historico, on=['disco', 'ano', 'segmento', 'mes'])
+    base_otimizacao.drop_duplicates(inplace=True)
     base_otimizacao = pd.merge(base_otimizacao, tipo_payback, on='segmento', how='left')
+    base_otimizacao.drop_duplicates(inplace=True)
     base_otimizacao['adotantes_hist'] = base_otimizacao['adotantes_hist'].fillna(0)
 
     # Ajustar payback de acordo com o tipo_payback
@@ -560,14 +599,17 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
                                        'mes', 'payback', 'adotantes_acum',
                                        'segmento']].assign(ano=lambda x: x['ano'] - 2012)
     base_otimizacao = pd.merge(base_otimizacao, fator_sbp, on='segmento')
+    base_otimizacao.drop_duplicates(inplace=True)
 
     # Otimizar casos
     optimum_cases = []
     for index, row in casos_otimizacao.iterrows():
         optimum_cases.append(pd.DataFrame(otimiza_casos(base_otimizacao, row, p_max, q_max)))
     optimum_cases = pd.concat(optimum_cases, ignore_index=True)
+    optimum_cases.drop_duplicates(inplace=True)
 
     optimum_cases = pd.merge(optimum_cases, fator_sbp, on='segmento')
+    optimum_cases.drop_duplicates(inplace=True)
 
     # Anos de simulação
     anos_simulacao = pd.DataFrame({'ano': np.arange(1, 23)})
@@ -576,6 +618,7 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
     # Meses de simulação
     meses_simulacao = pd.DataFrame({'mes': np.arange(1, 13)})
     optimum_cases = pd.merge(optimum_cases, meses_simulacao, how='cross')
+    optimum_cases.drop_duplicates(inplace=True)
 
     # Calcular Ft
     optimum_cases['Ft'] = \
@@ -588,9 +631,11 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
 
     # Juntar com consumidores
     optimum_cases = pd.merge(optimum_cases, results_consumidores, on=['disco', 'segmento', 'ano', 'mes'])
+    optimum_cases.drop_duplicates(inplace=True)
 
     # Juntar com casos_otimizados
     optimum_cases = pd.merge(optimum_cases, results_payback, on=['disco', 'segmento', 'ano', 'mes'])
+    optimum_cases.drop_duplicates(inplace=True)
 
     # Calcular mercado_potencial
     optimum_cases['payback'] = optimum_cases['payback'].fillna(100000)
@@ -598,6 +643,7 @@ def get_calibra_curva_s(results_payback, results_consumidores, p_max, q_max,
         np.round(np.exp(-optimum_cases['spb'] * optimum_cases['payback']) * optimum_cases['consumidores'], 0)
     optimum_cases['mercado_potencial'] = np.where(optimum_cases['mercado_potencial'] == 0, 1,
                                                   optimum_cases['mercado_potencial'])
+    optimum_cases.drop_duplicates(inplace=True)
 
     return optimum_cases
 
@@ -636,9 +682,11 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     # Residencial
     crescimento_mercado = pd.read_excel(os.path.join(dir_dados_premissas, "crescimento_mercado.xlsx"), header=0,
                                         sheet_name='Planilha1')
+    crescimento_mercado['taxa_crescimento_mercado'] = crescimento_mercado['taxa_crescimento_mercado'].astype(float)
     crescimento_mercado['crescimento_acumulado'] = \
-        crescimento_mercado.groupby('disco')['taxa_crescimento_mercado'].apply(lambda x: (1 + x).cumprod())
+        crescimento_mercado.groupby('disco')['taxa_crescimento_mercado'].transform(lambda x: (1 + x).cumprod())
     crescimento_mercado.drop('taxa_crescimento_mercado', axis=1, inplace=True)
+    crescimento_mercado.drop_duplicates(inplace=True)
 
     # Consumidores residenciais
     consumidores_residenciais = pd.read_excel(os.path.join(dir_dados_premissas, "consumidores_residenciais_renda.xlsx"),
@@ -662,6 +710,7 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
             var_name='renda',
             value_name='domicilios'
         )
+    consumidores_residenciais.drop_duplicates(inplace=True)
 
     # Lista os consumidores residenciais
     lista_consumidores_residenciais = \
@@ -681,6 +730,7 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
             on=['disco', 'renda']
         )
     consumidores_residenciais = pd.merge(consumidores_residenciais, crescimento_mercado, on=['ano', 'disco'])
+    consumidores_residenciais.drop_duplicates(inplace=True)
 
     # Acrescentando projeção de consumidores residenciais
     consumidores_residenciais['consumidores_proj'] = \
@@ -688,6 +738,7 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_residenciais['consumidores_proj'] = consumidores_residenciais['consumidores_proj'].astype(int)
     consumidores_residenciais = consumidores_residenciais[['disco', 'ano', 'mes', 'renda', 'consumidores_proj']]
     consumidores_residenciais = consumidores_residenciais[consumidores_residenciais['ano'] > 2012]
+    consumidores_residenciais.drop_duplicates(inplace=True)
 
     # Consumidores B2 e B3
     consumidores_b2b3 = pd.read_excel(os.path.join(dir_dados_premissas, "consumidores_b2b3.xlsx"), header=0,
@@ -701,6 +752,7 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_b2b3['ano'] = consumidores_b2b3['ano'].astype(int)
     consumidores_b2b3 = consumidores_b2b3.groupby(['disco', 'ano'])['consumidores'].sum().reset_index()
     consumidores_b2b3 = consumidores_b2b3[(consumidores_b2b3['ano'] == ano_base)]
+    consumidores_b2b3.drop_duplicates(inplace=True)
 
     # Lista de consumidores
     lista_consumidores_b2b3 = consumidores_b2b3[['disco']].drop_duplicates()
@@ -718,12 +770,19 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
         )
     consumidores_b2b3 = consumidores_b2b3[consumidores_b2b3['ano'] > 2012]
     consumidores_b2b3 = pd.merge(consumidores_b2b3, crescimento_mercado, on=['disco', 'ano'])
+    consumidores_b2b3.drop_duplicates(inplace=True)
 
     # Acrescentando projeção de consumidores B2 e B3
     consumidores_b2b3['consumidores_proj'] = \
-        consumidores_b2b3['consumidores'] * consumidores_b2b3['crescimento_acumulado']
+        consumidores_b2b3.apply(lambda row:
+                                row['consumidores'] * row['crescimento_acumulado']
+                                if ((row['ano'] > ano_base + 1) or
+                                    ((row['ano'] == ano_base + 1) and (row['mes'] > 8)))
+                                else row['consumidores'],
+                                axis=1)
     consumidores_b2b3['consumidores_proj'] = consumidores_b2b3['consumidores_proj'].astype(int)
     consumidores_b2b3 = consumidores_b2b3[['disco', 'ano', 'mes', 'consumidores_proj']]
+    consumidores_b2b3.drop_duplicates(inplace=True)
 
     # Consumidores grupo A
     consumidores_a = pd.read_excel(os.path.join(dir_dados_premissas, "consumidores_a.xlsx"),
@@ -738,6 +797,7 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_a['ano'] = consumidores_a['ano'].astype(int)
     consumidores_a = consumidores_a.groupby(['disco', 'ano'])['consumidores'].sum().reset_index()
     consumidores_a = consumidores_a[consumidores_a['ano'] == ano_base]
+    consumidores_a.drop_duplicates(inplace=True)
 
     # Lista de consumidores
     consumidores_a.drop(['ano'], axis=1, inplace=True)
@@ -748,29 +808,35 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_a['consumidores_proj'] = consumidores_a['consumidores'] * consumidores_a['taxa_acumulada']
     consumidores_a['consumidores_proj'] = consumidores_a['consumidores_proj'].astype(int)
     consumidores_a = consumidores_a[['disco', 'ano', 'consumidores_proj']]
+    consumidores_a.drop_duplicates(inplace=True)
 
     # Acrescentando mês
     meses = range(1, 13)
     combinacoes = [(ano, mes) for ano in consumidores_a['ano'].unique() for mes in meses]
     df_combinacoes = pd.DataFrame(combinacoes, columns=['ano', 'mes'])
     consumidores_a = df_combinacoes.merge(consumidores_a, on='ano', how='left')
+    consumidores_a.drop_duplicates(inplace=True)
 
     # Consumidores totais para avaliação de share posterior
     consumidores_totais_domicilios = total_domicilios.copy()
     consumidores_totais_domicilios['segmento'] = ["residencial"] * len(consumidores_totais_domicilios)
     consumidores_totais_domicilios.rename(columns={'domicilios': 'total_ucs'}, inplace=True)
+    consumidores_totais_domicilios.drop_duplicates(inplace=True)
 
     consumidores_totais_b2b3 = \
         consumidores_b2b3.groupby(['ano', 'mes', 'disco']).agg(total_ucs=('consumidores_proj', 'sum')).reset_index()
     consumidores_totais_b2b3['segmento'] = ["comercial_bt"] * len(consumidores_totais_b2b3)
+    consumidores_totais_b2b3.drop_duplicates(inplace=True)
 
     consumidores_totais_a = \
         consumidores_a.groupby(['ano', 'mes', 'disco']).agg(total_ucs=('consumidores_proj', 'sum')).reset_index()
     consumidores_totais_a['segmento'] = ["comercial_at"] * len(consumidores_totais_a)
+    consumidores_totais_a.drop_duplicates(inplace=True)
 
     consumidores_totais_todos = pd.concat([consumidores_totais_domicilios, consumidores_totais_b2b3,
                                            consumidores_totais_a],
                                           ignore_index=True)
+    consumidores_totais_todos.drop_duplicates(inplace=True)
 
     # Calculo mercado nicho
     fator_tecnico = pd.read_excel(os.path.join(dir_dados_premissas, "fator_tecnico.xlsx"),
@@ -785,23 +851,26 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
             .groupby(['disco', 'local_remoto'])
             .agg(qtde_clientes=('qtde_u_csrecebem_os_creditos', 'sum'))
             .reset_index()
-            .groupby('disco')
+            .groupby('disco', group_keys=False)
             .apply(lambda x: x.assign(total_clientes=x['qtde_clientes'].sum()))
-            .reset_index(drop=True)
             .pipe(lambda x: x[x['local_remoto'] == "local"])
             .assign(fator_tecnico=lambda x: x['qtde_clientes'] / x['total_clientes'])
         )
+    fator_tecnico_comercial.drop_duplicates(inplace=True)
 
     consumidores_residenciais = consumidores_residenciais[consumidores_residenciais['renda'] == filtro_renda_domicilio]
 
     fator_comercial = \
         consumidores_residenciais.groupby(['disco', 'ano', 'mes']).agg(consumidores_nicho=('consumidores_proj',
                                                                                            'sum')).reset_index()
+    fator_comercial.drop_duplicates(inplace=True)
     fator_comercial = pd.merge(fator_comercial, total_domicilios, on=['ano', 'mes', 'disco'], how='left')
+    fator_comercial.drop_duplicates(inplace=True)
     fator_comercial['fator_nicho_comercial'] = fator_comercial['consumidores_nicho'] / fator_comercial['domicilios']
-    fator_comercial = fator_comercial[['ano', 'mes', 'fator_nicho_comercial']]
+    fator_comercial = fator_comercial[['disco', 'ano', 'mes', 'fator_nicho_comercial']]
 
     consumidores_residenciais = pd.merge(consumidores_residenciais, fator_tecnico, on='disco')
+    consumidores_residenciais.drop_duplicates(inplace=True)
     consumidores_residenciais['residencial'] = \
         consumidores_residenciais['consumidores_proj'] * consumidores_residenciais['fator_tecnico']
     consumidores_residenciais['residencial'] = consumidores_residenciais['residencial'].astype(int)
@@ -812,9 +881,13 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_residenciais = pd.melt(consumidores_residenciais, id_vars=['disco', 'ano', 'mes'],
                                         value_vars=['residencial', 'residencial_remoto'], var_name='segmento',
                                         value_name='consumidores')
+    consumidores_residenciais.drop_duplicates(inplace=True)
 
-    consumidores_b2b3 = pd.merge(consumidores_b2b3, fator_comercial, on=['ano', 'mes'])
+    consumidores_b2b3 = pd.merge(consumidores_b2b3, fator_comercial, on=['disco', 'ano', 'mes'])
+    consumidores_b2b3.drop_duplicates(inplace=True)
+
     consumidores_b2b3 = pd.merge(consumidores_b2b3, fator_tecnico_comercial, on='disco')
+    consumidores_b2b3.drop_duplicates(inplace=True)
     consumidores_b2b3['comercial_bt'] = \
         consumidores_b2b3['consumidores_proj'] * consumidores_b2b3['fator_tecnico'] * \
         consumidores_b2b3['fator_nicho_comercial']
@@ -827,14 +900,17 @@ def get_mercado_potencial(ano_base, tx_cresc_grupo_a, filtro_renda_domicilio, fa
     consumidores_b2b3 = pd.melt(consumidores_b2b3, id_vars=['disco', 'ano', 'mes'],
                                 value_vars=['comercial_bt', 'comercial_at_remoto'], var_name='segmento',
                                 value_name='consumidores')
+    consumidores_b2b3.drop_duplicates(inplace=True)
 
     consumidores_a['segmento'] = ["comercial_at"] * len(consumidores_a)
     consumidores_a.rename(columns={'consumidores_proj': 'consumidores'}, inplace=True)
     consumidores_a = consumidores_a[['disco', 'ano', 'mes', 'segmento', 'consumidores']]
+    consumidores_a.drop_duplicates(inplace=True)
 
     # Lista com os dataframes de resultados
     consumidores_nicho_todos = pd.concat([consumidores_residenciais, consumidores_b2b3, consumidores_a],
                                          ignore_index=True)
+    consumidores_nicho_todos.drop_duplicates(inplace=True)
 
     return consumidores_nicho_todos, consumidores_totais_todos
 
@@ -898,9 +974,11 @@ def get_payback(casos, premissas_reg, inflacao, taxa_desconto_nominal, ano_troca
 
     # Empilhar todos os DataFrames em um único DataFrame final
     results_payback = pd.concat(total_results, ignore_index=True)
+    results_payback.drop_duplicates(inplace=True)
 
     # Concatenando o DataFrame de paybacks ao DataFrame existente de casos
     results_payback = pd.merge(casos, results_payback, on=['disco', 'segmento', 'ano'])
+    results_payback.drop_duplicates(inplace=True)
 
     return results_payback
 
@@ -953,10 +1031,13 @@ def get_casos_payback(ano_max_resultado, inflacao, ano_troca_inversor, fator_cus
     casos.drop(['fc_mini', 'fc_micro'], axis=1, inplace=True)
     casos.rename(columns={'fv': 'fc'}, inplace=True)
     casos = pd.merge(casos, ufv_fonte, on='fonte_resumo')
+    casos.drop_duplicates(inplace=True)
     casos = pd.merge(casos, potencia_tipica, on=['disco', 'segmento'])
+    casos.drop_duplicates(inplace=True)
 
     # Unindo casos com o custo
     casos = pd.merge(casos, custos, on='segmento')
+    casos.drop_duplicates(inplace=True)
 
     # Casos para o payback
     casos['capex_inicial'] = [casos['custo_unitario'].iloc[row] * casos['pot_sistemas_kw'].iloc[row] * 1000
@@ -970,6 +1051,7 @@ def get_casos_payback(ano_max_resultado, inflacao, ano_troca_inversor, fator_cus
 
     # Filtrando período de interesse
     casos = casos[casos['ano'] <= ano_max_resultado]
+    casos.drop_duplicates(inplace=True)
 
     return casos
 
@@ -1034,7 +1116,7 @@ def get_parametros():
 
     dict_args = {
         'ano_base': 2023,
-        'ano_max_resultado': 2034,
+        'ano_max_resultado': 2035,
         'altera_sistemas_existentes': False,
         'ano_decisao_alteracao': 2023,
         'inflacao': 0.0375,
@@ -1053,7 +1135,7 @@ def get_parametros():
         'p_max': 0.01,
         'q_max': 1,
         'ajuste_ano_corrente': True,
-        'ultimo_mes_ajuste': 2,
+        'ultimo_mes_ajuste': 8,
         'metodo_ajuste': "extrapola",
         'dir_dados_premissas': "./input/"
     }
